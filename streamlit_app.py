@@ -1,151 +1,187 @@
 import streamlit as st
 import pandas as pd
-import math
-from pathlib import Path
-
-# Set the title and favicon that appear in the Browser's tab bar.
-st.set_page_config(
-    page_title='GDP dashboard',
-    page_icon=':earth_americas:', # This is an emoji shortcode. Could be a URL too.
-)
-
-# -----------------------------------------------------------------------------
-# Declare some useful functions.
-
-@st.cache_data
-def get_gdp_data():
-    """Grab GDP data from a CSV file.
-
-    This uses caching to avoid having to read the file every time. If we were
-    reading from an HTTP endpoint instead of a file, it's a good idea to set
-    a maximum age to the cache with the TTL argument: @st.cache_data(ttl='1d')
-    """
-
-    # Instead of a CSV on disk, you could read from an HTTP endpoint here too.
-    DATA_FILENAME = Path(__file__).parent/'data/gdp_data.csv'
-    raw_gdp_df = pd.read_csv(DATA_FILENAME)
-
-    MIN_YEAR = 1960
-    MAX_YEAR = 2022
-
-    # The data above has columns like:
-    # - Country Name
-    # - Country Code
-    # - [Stuff I don't care about]
-    # - GDP for 1960
-    # - GDP for 1961
-    # - GDP for 1962
-    # - ...
-    # - GDP for 2022
-    #
-    # ...but I want this instead:
-    # - Country Name
-    # - Country Code
-    # - Year
-    # - GDP
-    #
-    # So let's pivot all those year-columns into two: Year and GDP
-    gdp_df = raw_gdp_df.melt(
-        ['Country Code'],
-        [str(x) for x in range(MIN_YEAR, MAX_YEAR + 1)],
-        'Year',
-        'GDP',
-    )
-
-    # Convert years from string to integers
-    gdp_df['Year'] = pd.to_numeric(gdp_df['Year'])
-
-    return gdp_df
-
-gdp_df = get_gdp_data()
-
-# -----------------------------------------------------------------------------
-# Draw the actual page
-
-# Set the title that appears at the top of the page.
-'''
-# :earth_americas: GDP dashboard
-
-Browse GDP data from the [World Bank Open Data](https://data.worldbank.org/) website. As you'll
-notice, the data only goes to 2022 right now, and datapoints for certain years are often missing.
-But it's otherwise a great (and did I mention _free_?) source of data.
-'''
-
-# Add some spacing
-''
-''
-
-min_value = gdp_df['Year'].min()
-max_value = gdp_df['Year'].max()
-
-from_year, to_year = st.slider(
-    'Which years are you interested in?',
-    min_value=min_value,
-    max_value=max_value,
-    value=[min_value, max_value])
-
-countries = gdp_df['Country Code'].unique()
-
-if not len(countries):
-    st.warning("Select at least one country")
-
-selected_countries = st.multiselect(
-    'Which countries would you like to view?',
-    countries,
-    ['DEU', 'FRA', 'GBR', 'BRA', 'MEX', 'JPN'])
-
-''
-''
-''
-
-# Filter the data
-filtered_gdp_df = gdp_df[
-    (gdp_df['Country Code'].isin(selected_countries))
-    & (gdp_df['Year'] <= to_year)
-    & (from_year <= gdp_df['Year'])
-]
-
-st.header('GDP over time', divider='gray')
-
-''
-
-st.line_chart(
-    filtered_gdp_df,
-    x='Year',
-    y='GDP',
-    color='Country Code',
-)
-
-''
-''
+import seaborn as sns
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.pipeline import Pipeline
+from transformers import pipeline
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.impute import SimpleImputer
+from sklearn.compose import ColumnTransformer
+from sklearn.metrics import accuracy_score, classification_report , confusion_matrix, roc_curve, auc , f1_score, precision_score, recall_score
 
 
-first_year = gdp_df[gdp_df['Year'] == from_year]
-last_year = gdp_df[gdp_df['Year'] == to_year]
+# make containers
+header = st.container()
+datasets = st.container()
+features = st.container()
+model_training = st.container()
 
-st.header(f'GDP in {to_year}', divider='gray')
+with header:
+    st.title('Bondora Data Processing and Classification App')
+    st.text('In this project, we are working with bondora dataset!')
+    
 
-''
+with datasets:
+    st.header('Bondora Dataset')
+    st.text('This dataset is about Bondora')
+    # import data
+    data = pd.read_csv('Bondora_preprocessed.csv', low_memory=False)
+    # Step 1: Drop columns with more than 10% missing values
+    threshold = 0.1 * len(data)
+    df = data.dropna(thresh=threshold, axis=1) 
+    st.write(df.head(10))
+    st.bar_chart(data['Status'].value_counts())
 
-cols = st.columns(4)
+# Define numerical and categorical columns
+ # Convert boolean columns to integers if they exist in the dataset
+if 'NewCreditCustomer' in df.columns:
+    df['NewCreditCustomer'] = df['NewCreditCustomer'].astype(int)
+if 'Restructured' in df.columns:
+    df['Restructured'] = df['Restructured'].astype(int)
 
-for i, country in enumerate(selected_countries):
-    col = cols[i % len(cols)]
+    # Check if 'Status' column exists
+if 'Status' in df.columns:
+    # Separate the target variable and features
+    X = df.drop(columns=['Status'])  # Features
+    y = df['Status']  # Target
 
-    with col:
-        first_gdp = first_year[first_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
-        last_gdp = last_year[last_year['Country Code'] == country]['GDP'].iat[0] / 1000000000
+with features:
+    st.header('Features')
+    st.text('Numerical features I am going to use')
 
-        if math.isnan(first_gdp):
-            growth = 'n/a'
-            delta_color = 'off'
-        else:
-            growth = f'{last_gdp / first_gdp:,.2f}x'
-            delta_color = 'normal'
+# Define numerical and categorical columns
+    numerical_cols = X.select_dtypes(include=['int64', 'float64']).columns
+    categorical_cols = X.select_dtypes(include=['object', 'category']).columns
+    
+with model_training:
+    
+    st.header('Model Training')
+    st.text('Train a Random Forest model to predict the status of a loan')
+    
+    
+# Split data into train and test sets
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        st.metric(
-            label=f'{country} GDP',
-            value=f'{last_gdp:,.0f}B',
-            delta=growth,
-            delta_color=delta_color
-        )
+# Preprocessing pipeline for numerical features
+    numerical_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='mean')),  # Handle missing values
+        ('scaler', StandardScaler())  # Standardize numerical features
+        ])
+    
+
+# Preprocessing pipeline for categorical features
+    categorical_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='most_frequent')),  # Handle missing categorical values
+        ('onehot', OneHotEncoder(handle_unknown='ignore'))  # One-hot encode categorical features
+        ])
+        
+# Combine transformers into a single preprocessor
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', numerical_transformer, numerical_cols),
+            ('cat', categorical_transformer, categorical_cols)
+            ])
+
+# Apply the preprocessing pipeline to the data
+    X_train_preprocessed = preprocessor.fit_transform(X_train)
+    X_test_preprocessed = preprocessor.transform(X_test)
+
+# Initialize the Random Forest model
+model = RandomForestClassifier(random_state=42)
+
+# Train the model
+model.fit(X_train_preprocessed, y_train)
+
+# Make predictions on the test set
+y_pred = model.predict(X_test_preprocessed)
+st.write(y_pred)
+
+# Evaluate the model
+accuracy = accuracy_score(y_test, y_pred)
+st.write(f"### Model Accuracy: {accuracy * 100:.2f}%")
+
+# Confusion Matrix
+st.subheader('Confusion Matrix:')
+cm = confusion_matrix(y_test, y_pred)
+fig, ax = plt.subplots(figsize=(6, 4))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False, ax=ax)
+ax.set_xlabel('Predicted')
+ax.set_ylabel('Actual')
+st.pyplot(fig)
+        
+# Display classification report as a dataframe
+st.write("### Classification Report:")
+report = classification_report(y_test, y_pred, output_dict=True)
+st.write(report)
+
+
+# ROC Curve (for binary classification)
+if len(set(y)) == 2:
+    st.subheader('ROC Curve:')
+    
+    # Predict probabilities for positive class (class 1)
+    y_prob = pipeline.predict_proba(X_test)[:, 1]
+    
+    # Calculate False Positive Rate (FPR) and True Positive Rate (TPR)
+    fpr, tpr, _ = roc_curve(y_test, y_prob)
+    
+    # Compute the Area Under the Curve (AUC)
+    roc_auc = auc(fpr, tpr)
+
+    # Plot the ROC curve
+    fig, ax = plt.subplots()
+    ax.plot(fpr, tpr, color='darkorange', lw=2, label=f'ROC curve (area = {roc_auc:.2f})')
+    ax.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')  # Diagonal line (chance level)
+    ax.set_xlim([0.0, 1.0])
+    ax.set_ylim([0.0, 1.05])
+    ax.set_xlabel('False Positive Rate')
+    ax.set_ylabel('True Positive Rate')
+    ax.set_title('Receiver Operating Characteristic')
+    ax.legend(loc="lower right")
+    st.pyplot(fig)
+
+
+
+# --- User Input for Predictions ---
+st.subheader('Make Predictions')
+
+# Collect user inputs for prediction
+st.write("Provide input values:")
+user_inputs = {}
+for col in X.columns:
+    if col in numerical_cols:
+        user_inputs[col] = st.number_input(f"Enter value for {col}", value=float(X[col].mean()))
+    else:
+        user_inputs[col] = st.selectbox(f"Select value for {col}", options=df[col].unique())
+
+# Convert the user inputs into a dataframe
+input_df = pd.DataFrame([user_inputs])
+
+prediction = model.predict(preprocessor.transform(input_df))
+prediction_proba = model.predict_proba(preprocessor.transform(input_df))
+st.subheader(f"The model predicts: {prediction}")
+st.subheader(f"Probability of each class: {prediction_proba}")
+
+# --- Visualizations ---
+st.subheader('Data Visualizations')
+
+# Histogram for numerical columns
+
+st.header("Histograms for a limited number of numerical features")
+cols = numerical_cols[:5]  # Select the first 5 numerical columns
+fig, ax = plt.subplots(3, 2, figsize=(10, 8))
+ax = ax.ravel()
+for i, col in enumerate(cols):
+    ax[i].hist(df[col], bins=20, color='skyblue', edgecolor='black')
+    ax[i].set_title(f'Histogram of {col}')
+st.pyplot(fig)
+
+# Correlation heatmap for numerical columns
+
+st.header("Correlation Heatmap for numerical columns")
+cols = numerical_cols[:5]  # Select the first 5 numerical columns
+corr = pd.DataFrame(df, columns=cols).corr()
+fig, ax = plt.subplots(figsize=(6, 4))
+sns.heatmap(corr, annot=True, cmap='coolwarm', ax=ax)
+st.pyplot(fig)
